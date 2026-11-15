@@ -1,0 +1,144 @@
+<!DOCTYPE html><html lang="id"><head><meta charset="utf-8"><title>Granny Escape Challenge</title>
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;background:#000;color:#ddd;font-family:Georgia,serif;overflow:hidden}
+canvas{display:block}.ov{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;text-align:center;background:rgba(0,0,0,.88);z-index:5;padding:16px}
+.ov h1{color:#b00;font-size:clamp(28px,6vw,54px);margin:0 0 6px;text-shadow:0 0 18px #600}
+button,select{background:#222;color:#eee;border:1px solid #733;padding:9px 16px;margin:4px;font:inherit;cursor:pointer}button:hover{background:#511}
+.big{font-size:20px;background:#600}label{display:block;margin:4px}.sm{font-size:13px;color:#999;max-width:560px}
+#hud{position:fixed;left:10px;top:10px;font:13px monospace;z-index:3;text-shadow:0 0 4px #000;pointer-events:none}
+#btns{position:fixed;right:10px;top:10px;z-index:4}#btns button{padding:4px 9px;font-size:13px}
+#pr{position:fixed;bottom:14%;width:100%;text-align:center;z-index:3;color:#fc8;pointer-events:none;text-shadow:0 0 5px #000}
+#blood{position:fixed;inset:0;pointer-events:none;z-index:2;box-shadow:inset 0 0 160px 50px #900;opacity:0;transition:opacity .2s}
+#cross{position:fixed;left:50%;top:50%;width:4px;height:4px;background:#fff8;border-radius:50%;margin:-2px;z-index:3}
+.hide{display:none!important}
+</style></head><body>
+<div id="blood"></div><div id="cross"></div><div id="hud"></div><div id="pr"></div>
+<div id="btns" class="hide"><button id="bp">⏸ Jeda</button><button id="br">↻ Ulangi</button></div>
+<div class="ov" id="menu"><h1>GRANNY ESCAPE CHALLENGE</h1>
+<p class="sm">Kabur dari rumah 3 lantai dalam 5 hari. Granny buta, tapi mendengar semuanya. Pilih satu jalur pelarian dan kumpulkan itemnya (lokasi diacak tiap permainan).</p>
+<label>Kesulitan <select id="dif"><option>Practice</option><option>Easy</option><option selected>Normal</option><option>Hard</option><option>Extreme</option></select></label>
+<label>Sensitivitas mouse <input type="range" id="sen" min="1" max="10" value="5"></label>
+<label>Volume <input type="range" id="vol" min="0" max="10" value="7"></label>
+<button class="big" id="go">🚪 Mulai Bertahan Hidup</button>
+<p class="sm" id="info"></p>
+<p class="sm">WASD gerak • Shift lari • C jongkok (senyap) • E ambil/pakai/tangga/keluar • G jatuhkan (berisik!) • F sembunyi • P/Esc jeda • Drag mouse jika kursor tidak terkunci</p></div>
+<div class="ov hide" id="msg"><h1 id="mt"></h1><p id="ms" class="sm"></p><button id="mb" class="hide">Menu Utama</button></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const $=i=>document.getElementById(i),R=Math.random,rr=(a,b)=>a+R()*(b-a);
+const DIF={Practice:[.5,.6],Easy:[.75,.8],Normal:[1,1],Hard:[1.2,1.2],Extreme:[1.4,1.4]};
+const ROUTES={door:{n:'Pintu Utama',req:['Cutting Pliers','Hammer','Padlock Key','Master Key'],at:[0,0,13.4]},
+car:{n:'Mobil Garasi',req:['Engine Part','Spark Plug','Car Battery','Gasoline Can','Wrench','Car Key'],at:[0,12,-9]},
+tun:{n:'Terowongan Bawah Tanah',req:['Rusty Padlock Key','Cutting Pliers','Chain Cutter','Wheel Crank'],at:[0,-12,-9]}};
+const ALL=[...new Set(Object.values(ROUTES).flatMap(r=>r.req))];
+const W=[[-15.3,-15.3,15.3,-15],[-15.3,15,15.3,15.3],[-15.3,-15,-15,15],[15,-15,15.3,15],[-.15,-15,.15,-3],[-.15,3,.15,15],[-15,-.15,-3,.15],[3,-.15,15,.15]];
+const hit=(x,z,r)=>W.some(w=>x>w[0]-r&&x<w[2]+r&&z>w[1]-r&&z<w[3]+r);
+function best(){try{return JSON.parse(localStorage.getItem('gec')||'{}')}catch(e){return{}}}
+function showBest(){const b=best();$('info').innerHTML='Rekor tercepat: '+Object.keys(ROUTES).map(k=>ROUTES[k].n+': '+(b[k]?b[k].toFixed(0)+'s':'-')).join(' | ')+'<br>Jalur: '+Object.values(ROUTES).map(r=>r.n+' ('+r.req.join(', ')+')').join('<br>')}
+showBest();
+// ---------- audio
+let AC,MG;function ac(){if(!AC){AC=new(window.AudioContext||window.webkitAudioContext)();MG=AC.createGain();MG.connect(AC.destination)}MG.gain.value=$('vol').value/10;if(AC.state=='suspended')AC.resume()}
+function tone(f,d,t,v,f2){if(!AC)return;const o=AC.createOscillator(),g=AC.createGain();o.type=t;o.frequency.value=f;if(f2)o.frequency.linearRampToValueAtTime(f2,AC.currentTime+d);g.gain.setValueAtTime(v,AC.currentTime);g.gain.exponentialRampToValueAtTime(.001,AC.currentTime+d);o.connect(g);g.connect(MG);o.start();o.stop(AC.currentTime+d)}
+function nz(d,v,fc){if(!AC)return;const n=AC.sampleRate*d,b=AC.createBuffer(1,n,AC.sampleRate),a=b.getChannelData(0);for(let i=0;i<n;i++)a[i]=(R()*2-1)*(1-i/n);const s=AC.createBufferSource(),fl=AC.createBiquadFilter(),g=AC.createGain();fl.frequency.value=fc;s.buffer=b;g.gain.value=v;s.connect(fl);fl.connect(g);g.connect(MG);s.start()}
+const sStep=v=>{nz(.12,v,300);tone(70,.12,'sine',v)},sCreak=()=>tone(180,.5,'sawtooth',.08,90+R()*80),sDrop=()=>{nz(.3,.6,900);tone(90,.25,'square',.2)},sBeat=v=>{tone(55,.15,'sine',v);setTimeout(()=>tone(48,.15,'sine',v*.8),170)},sDoor=()=>tone(120,.8,'sawtooth',.1,200);
+// ---------- three
+const rd=new THREE.WebGLRenderer({antialias:true});rd.setSize(innerWidth,innerHeight);rd.setPixelRatio(Math.min(devicePixelRatio,1.5));document.body.prepend(rd.domElement);
+const sc=new THREE.Scene();sc.background=new THREE.Color(0x030305);sc.fog=new THREE.FogExp2(0x040406,.085);
+const cam=new THREE.PerspectiveCamera(72,innerWidth/innerHeight,.1,60);cam.rotation.order='YXZ';sc.add(cam);
+addEventListener('resize',()=>{rd.setSize(innerWidth,innerHeight);cam.aspect=innerWidth/innerHeight;cam.updateProjectionMatrix()});
+sc.add(new THREE.AmbientLight(0x334466,.55));const moon=new THREE.DirectionalLight(0x6677aa,.25);moon.position.set(5,10,3);sc.add(moon);
+const fl=new THREE.SpotLight(0xffe8b0,1.6,22,.5,.5,1);fl.position.set(0,0,0);fl.target.position.set(0,0,-1);cam.add(fl,fl.target);
+function tex(c1,c2,line){const c=document.createElement('canvas');c.width=c.height=128;const x=c.getContext('2d');x.fillStyle=c1;x.fillRect(0,0,128,128);x.strokeStyle=c2;for(let i=0;i<60;i++){x.globalAlpha=.4;x.beginPath();if(line){x.moveTo(0,R()*128);x.lineTo(128,R()*128)}else{x.moveTo(R()*128,0);x.lineTo(R()*128,128)}x.stroke()}const t=new THREE.CanvasTexture(c);t.wrapS=t.wrapT=THREE.RepeatWrapping;return t}
+const tF=tex('#3b2616','#1a0e06',1);tF.repeat.set(6,6);const tW=tex('#4a4338','#2a2218',0);tW.repeat.set(3,1);
+const mF=new THREE.MeshStandardMaterial({map:tF,roughness:.9}),mW=new THREE.MeshStandardMaterial({map:tW,roughness:1});
+const box=(w,h,d,m,x,y,z)=>{const o=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),m);o.position.set(x,y,z);sc.add(o);return o};
+for(let f=0;f<3;f++){const y=f*4;box(30.6,.2,30.6,mF,0,y-.1,0);box(30.6,.2,30.6,mW,0,y+4.1,0);
+W.forEach(w=>box(w[2]-w[0],4,w[3]-w[1],mW,(w[0]+w[2])/2,y+2,(w[1]+w[3])/2));
+box(1.6,.1,2.4,new THREE.MeshBasicMaterial({color:0x1a5a2a}),-13,y+.05,-13);box(1.6,.1,2.4,new THREE.MeshBasicMaterial({color:0x5a2a1a}),13,y+.05,-13);
+box(3.5,.05,.6,new THREE.MeshStandardMaterial({color:0x445577,emissive:0x223355}),0,y+2.5,-14.9).rotation.x=0}
+// exits
+Object.values(ROUTES).forEach(r=>box(2.4,2.4,.3,new THREE.MeshStandardMaterial({color:r.n[0]=='P'?0x5a3a1a:r.n[0]=='M'?0x333344:0x222222,emissive:0x221100}),r.at[1],2+0*1.2,r.at[2]).position.y=1.2);
+// ---------- state
+let S='menu',D=DIF.Normal,P,G,items=[],hides=[],keys={},day=1,t0=0,played=0,msgT=0,msg='',limp=0,yaw=0,pitch=0,stepT=0,beatT=0,gStepT=0,md=false,route='',inv=[];
+const gm=new THREE.Group();{const b=new THREE.Mesh(new THREE.CylinderGeometry(.35,.55,1.4,10),new THREE.MeshStandardMaterial({color:0x666055}));b.position.y=.7;const h=new THREE.Mesh(new THREE.SphereGeometry(.28,10,8),new THREE.MeshStandardMaterial({color:0xbba890}));h.position.y=1.7;const hr=new THREE.Mesh(new THREE.SphereGeometry(.3,8,6),new THREE.MeshStandardMaterial({color:0xcccccc}));hr.position.y=1.8;hr.scale.set(1,.7,1);gm.add(b,h,hr);sc.add(gm)}
+const itemMat=new THREE.MeshStandardMaterial({color:0xddaa33,emissive:0x553300});
+function spot(){let x,z,n=0;do{x=rr(-14,14);z=rr(-14,14);n++}while((hit(x,z,.8)||(Math.abs(Math.abs(x)-13)<2.5&&z<-10))&&n<99);return[x,z]}
+function newGame(){ac();D=DIF[$('dif').value];day=1;played=0;limp=0;inv=[];route='';
+items.forEach(i=>sc.remove(i.m));hides.forEach(h=>sc.remove(h.m));items=[];hides=[];
+ALL.forEach(n=>{const[x,z]=spot(),f=Math.floor(R()*3),m=new THREE.Mesh(new THREE.BoxGeometry(.3,.2,.3),itemMat);m.position.set(x,f*4+.2,z);sc.add(m);items.push({n,f,x,z,m,got:0})});
+for(let f=0;f<3;f++)for(let k=0;k<3;k++){const[x,z]=spot(),m=box(1.6,1.1,.8,new THREE.MeshStandardMaterial({color:0x2a1a10}),x,f*4+.55,z);hides.push({f,x,z,m})}
+P={x:-12,z:12,f:2,hid:null,cr:0};G={x:10,z:10,f:0,t:null,alert:0,stun:0,stuck:0};yaw=0;pitch=0;
+S='play';$('menu').classList.add('hide');$('msg').classList.add('hide');$('btns').classList.remove('hide');showMsg('Kamu terbangun di kamar tidur. Cari item, lalu kabur!');lock()}
+function lock(){try{rd.domElement.requestPointerLock()}catch(e){}}
+function showMsg(s){msg=s;msgT=4}
+function noise(x,z,f,rad){const d=Math.hypot(x-G.x,z-G.z),e=rad*D[1]/(1+Math.abs(f-G.f));if(d<e||(rad>=10&&Math.abs(f-G.f)<2&&d<e*1.3)){G.t={f,x,z};G.alert=10}}
+function caught(){S='day';day++;document.exitPointerLock&&document.exitPointerLock();const b=$('blood');b.style.opacity=1;
+$('btns').classList.add('hide');$('msg').classList.remove('hide');$('mb').classList.add('hide');
+if(day>5){S='over';$('mt').textContent='GAME OVER';$('ms').textContent='5 hari habis. Granny menang.';$('mb').classList.remove('hide');return}
+$('mt').textContent='Day '+day;$('ms').textContent='Kamu terbangun dengan luka... kaki terasa pincang.';
+setTimeout(()=>{if(S!='day')return;b.style.opacity=0;P.x=-12;P.z=12;P.f=2;P.hid=null;G.x=10;G.z=10;G.f=0;G.t=null;G.alert=0;limp=25;S='play';$('msg').classList.add('hide');$('btns').classList.remove('hide');lock();showMsg('Hari ke-'+day+'. Cepat!')},3200)}
+function win(k){S='win';document.exitPointerLock&&document.exitPointerLock();const tm=played,b=best();let rec='';if(!b[k]||tm<b[k]){b[k]=tm;rec=' REKOR BARU!';try{localStorage.setItem('gec',JSON.stringify(b))}catch(e){}}
+$('btns').classList.add('hide');$('msg').classList.remove('hide');$('mt').textContent='KAMU BEBAS!';$('ms').textContent='Lewat '+ROUTES[k].n+' pada Day '+day+'. Waktu: '+tm.toFixed(0)+' detik.'+rec+' Fajar menyingsing, Granny hanya bisa menatap kosong dari jendela...';$('mb').classList.remove('hide');showBest()}
+function dist(a,b){return Math.hypot(a.x-b.x,a.z-b.z)}
+function interact(){if(P.hid)return;
+if(P.f<2&&dist(P,{x:-13,z:-13})<2.2){P.f++;P.x=12;P.z=-12;sDoor();noise(P.x,P.z,P.f,6);return}
+if(P.f>0&&dist(P,{x:13,z:-13})<2.2){P.f--;P.x=-12;P.z=-12;sDoor();noise(P.x,P.z,P.f,6);return}
+for(const k in ROUTES){const r=ROUTES[k];if(P.f==r.at[0]&&dist(P,{x:r.at[1],z:r.at[2]})<2.8){const miss=r.req.filter(n=>!inv.includes(n));if(!miss.length)return win(k);showMsg('Belum lengkap: butuh '+miss.join(', '));noise(P.x,P.z,P.f,5);return}}
+let b=null,bd=2.3;items.forEach(i=>{if(!i.got&&i.f==P.f){const d=dist(P,i);if(d<bd){bd=d;b=i}}});
+if(b){if(inv.length>=6)return showMsg('Tas penuh (6). Jatuhkan dengan G.');b.got=1;b.m.visible=false;inv.push(b.n);showMsg('Mengambil '+b.n)}}
+function drop(){if(P.hid||!inv.length)return;const n=inv.pop(),i=items.find(i=>i.n==n);i.got=0;i.m.visible=true;i.x=P.x;i.z=P.z;i.f=P.f;i.m.position.set(P.x,P.f*4+.2,P.z);sDrop();noise(P.x,P.z,P.f,12);showMsg('Menjatuhkan '+n+' — BERISIK!')}
+function hide(){if(P.hid){P.hid=null;return}let b=null,bd=2.3;hides.forEach(h=>{if(h.f==P.f&&dist(P,h)<bd){bd=dist(P,h);b=h}});if(b){P.hid=b;P.x=b.x;P.z=b.z;showMsg('Bersembunyi... (F untuk keluar)')}}
+addEventListener('keydown',e=>{keys[e.code]=1;if(S!='play'&&S!='pause')return;if(e.code=='KeyP'||e.code=='Escape')return togglePause();if(S!='play')return;if(e.code=='KeyE')interact();if(e.code=='KeyG')drop();if(e.code=='KeyF')hide();if(e.code=='KeyC')P.cr=!P.cr});
+addEventListener('keyup',e=>keys[e.code]=0);
+addEventListener('mousedown',()=>md=true);addEventListener('mouseup',()=>md=false);
+addEventListener('mousemove',e=>{if(S!='play')return;if(document.pointerLockElement||md){const s=$('sen').value*.0006;yaw-=e.movementX*s;pitch=Math.max(-1.4,Math.min(1.4,pitch-e.movementY*s))}});
+document.addEventListener('pointerlockchange',()=>{if(!document.pointerLockElement&&S=='play')togglePause(1)});
+function togglePause(f){if(S=='play'){S='pause';$('msg').classList.remove('hide');$('mt').textContent='Jeda';$('ms').textContent='Tekan P / klik Lanjut. Volume dapat diubah di menu utama.';$('mb').classList.remove('hide');$('mb').textContent='Menu Utama';$('bp').textContent='▶ Lanjut'}
+else if(S=='pause'){S='play';$('msg').classList.add('hide');$('bp').textContent='⏸ Jeda';lock()}}
+$('bp').onclick=()=>togglePause();$('br').onclick=newGame;$('go').onclick=newGame;
+$('mb').onclick=()=>{S='menu';$('msg').classList.add('hide');$('btns').classList.add('hide');$('menu').classList.remove('hide');$('blood').style.opacity=0;showBest()};
+$('msg').onclick=e=>{if(S=='pause'&&e.target.id=='msg')togglePause()};
+// ---------- granny AI
+function gStep(dt){if(G.stun>0){G.stun-=dt;return}
+let t=G.t;if(!t||dist(G,t)<.9&&t.f==G.f){if(G.alert>0&&t){G.alert-=dt*2}G.t=t={f:Math.floor(R()*3),x:rr(-13,13),z:rr(-13,13)};if(R()<.4*D[0]){G.t={f:P.f,x:P.x+rr(-6,6),z:P.z+rr(-6,6)}}}
+let tx=t.x,tz=t.z;if(t.f!=G.f){const up=t.f>G.f;tx=up?-13:13;tz=-13;if(Math.hypot(G.x-tx,G.z-tz)<1.6){G.f+=up?1:-1;G.x=up?12:-12;G.z=-12;sDoor();return}}
+const q=(x,z)=>(x>0)+2*(z>0);if(q(G.x,G.z)!=q(tx,tz)&&Math.hypot(G.x,G.z)>3.5){tx=0;tz=0}
+const sp=(G.alert>0?4.3:1.9)*D[0];if(G.alert>0)G.alert-=dt;
+const dx=tx-G.x,dz=tz-G.z,d=Math.hypot(dx,dz)||1,vx=dx/d*sp*dt,vz=dz/d*sp*dt;let mv=0;
+if(!hit(G.x+vx,G.z,.4)){G.x+=vx;mv=1}if(!hit(G.x,G.z+vz,.4)){G.z+=vz;mv=1}
+G.stuck=mv?Math.max(0,G.stuck-dt):G.stuck+dt;if(G.stuck>1.2){G.t=null;G.stuck=0;G.x+=rr(-1,1);G.z+=rr(-1,1);if(hit(G.x,G.z,.4)){G.x=0;G.z=0}}
+gStepT-=dt;if(gStepT<0&&G.f==P.f){gStepT=G.alert>0?.3:.6;const dd=dist(G,P);if(dd<20)sStep(Math.max(.02,.5-dd/40))}}
+// ---------- loop
+let last=performance.now();
+function loop(now){requestAnimationFrame(loop);const dt=Math.min(.05,(now-last)/1000);last=now;
+if(S=='play'){played+=dt;
+if(!P.hid){let f=(keys.KeyW?1:0)-(keys.KeyS?1:0),s=(keys.KeyD?1:0)-(keys.KeyA?1:0),mv=f||s;
+const run=keys.ShiftLeft&&!P.cr,sp=(P.cr?1.5:run?5.2:3)*(limp>0?.6:1);
+if(mv){const l=Math.hypot(f,s),fx=-Math.sin(yaw),fz=-Math.cos(yaw),rx=Math.cos(yaw),rz=-Math.sin(yaw);
+const vx=(fx*f+rx*s)/l*sp*dt,vz=(fz*f+rz*s)/l*sp*dt;if(!hit(P.x+vx,P.z,.4))P.x+=vx;if(!hit(P.x,P.z+vz,.4))P.z+=vz;
+stepT-=dt;if(stepT<0){stepT=P.cr?.8:run?.32:.55;const rad=P.cr?2:run?14:7;sStep(P.cr?.05:run?.5:.3);noise(P.x,P.z,P.f,rad);
+if(P.f>=1&&R()<(P.cr?.03:.25)){sCreak();noise(P.x,P.z,P.f,10);showMsg('Lantai berderit!')}}}}
+if(limp>0)limp-=dt;
+G&&gStep(dt);
+if(!P.hid&&G.f==P.f&&dist(G,P)<1.1)caught();
+const gd=G.f==P.f?dist(G,P):99;beatT-=dt;if(gd<12&&beatT<0){beatT=.35+gd*.06;sBeat(.5-gd*.03)}
+$('blood').style.opacity=S=='play'?Math.max(0,(8-gd)/16)+(limp>0?.12:0):1;
+msgT-=dt}
+const sway=limp>0?Math.sin(played*4)*.06:0;
+cam.position.set(P?P.x:0,(P?P.f*4:8)+(P&&P.hid?.6:P&&P.cr?1.0:1.7)+(P&&!P.hid&&(keys.KeyW||keys.KeyS)?Math.sin(played*9)*.04:0),P?P.z:0);
+cam.rotation.set(pitch,yaw,sway);
+if(G){gm.position.set(G.x,G.f*4,G.z);gm.rotation.y=Math.atan2(P.x-G.x,P.z-G.z)}
+if(S=='play'&&P&&G.f==P.f&&dist(G,P)<7&&R()<.03){cam.position.x+=rr(-.05,.05);cam.position.y+=rr(-.05,.05)}
+if(S=='play'&&R()<.004)fl.intensity=.3;else fl.intensity=1.6;
+if(S=='play'){let pr='';
+if(P.hid)pr='[F] Keluar dari persembunyian';else{
+if(P.f<2&&dist(P,{x:-13,z:-13})<2.2)pr='[E] Naik tangga';else if(P.f>0&&dist(P,{x:13,z:-13})<2.2)pr='[E] Turun tangga';
+for(const k in ROUTES){const r=ROUTES[k];if(P.f==r.at[0]&&dist(P,{x:r.at[1],z:r.at[2]})<2.8)pr='[E] Coba kabur: '+r.n}
+items.forEach(i=>{if(!i.got&&i.f==P.f&&dist(P,i)<2.3)pr='[E] Ambil '+i.n});
+hides.forEach(h=>{if(!pr&&h.f==P.f&&dist(P,h)<2.3)pr='[F] Bersembunyi (kolong/lemari)'})}
+$('pr').textContent=msgT>0?msg:pr;
+$('hud').innerHTML='Day '+day+'/5 • Lantai '+(P.f+1)+' • '+played.toFixed(0)+'s '+(P.cr?'• 🤫 jongkok ':'')+(limp>0?'• 🩸 pincang':'')+'<br>Tas ('+inv.length+'/6): '+(inv.join(', ')||'-')}
+rd.render(sc,cam)}
+requestAnimationFrame(loop);
+</script></body></html>
